@@ -46,7 +46,7 @@ Use conventional commit subjects and `git commit -s` for DCO sign-off. Follow ex
 
 ```bash
 pnpm -C admin-web typecheck
-pnpm -C admin-web test -- --maxWorkers=2
+pnpm -C admin-web exec vitest run src --maxWorkers=2
 ```
 
 The admin resource hook isolates data/errors by the current request key. A route change hides the previous record immediately; same-key refreshes retain data with visible loading/failure feedback and retry. [JCK-93](https://linear.app/jckail/issue/JCK-93/prevent-stale-admin-records-across-resource-navigation) tracks that fix.
