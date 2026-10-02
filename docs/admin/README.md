@@ -67,3 +67,13 @@ admission is not per-operator identity. Anyone admitted to the dashboard can
 read attachments for feedback records they can access. Per-person attribution
 or revocation requires authenticated operator identity at ingress/application
 level; this endpoint deliberately does not claim to provide it.
+
+## Browser resource state
+
+Report and feedback detail navigation isolates data, error and loading by request
+key. A new key hides the previous record synchronously; obsolete completions are
+ignored even when navigation returns to an earlier key. Same-key refreshes retain
+previous content with explicit refresh/failure feedback and Retry. These UI
+safeguards do not replace the private-ingress or server authorization boundary.
+See the [frontend architecture](../frontend/architecture.mdx) and
+[developer guide](../frontend/developer.mdx) for source anchors and synthetic tests.
