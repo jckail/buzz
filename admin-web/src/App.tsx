@@ -62,9 +62,13 @@ function StateView<T>({
   resource: ReturnType<typeof useResource<T>>;
   children: (data: T) => ReactNode;
 }) {
-  if (resource.loading && !resource.data)
-    return <div className="state">Loading…</div>;
-  if (resource.error && !resource.data) {
+  if (resource.loading && resource.data === undefined)
+    return (
+      <div className="state" role="status">
+        Loading…
+      </div>
+    );
+  if (resource.error && resource.data === undefined) {
     const forbidden =
       resource.error instanceof ApiFailure && resource.error.status === 403;
     return (
@@ -77,7 +81,24 @@ function StateView<T>({
       </div>
     );
   }
-  return resource.data ? children(resource.data) : null;
+  if (resource.data === undefined) return null;
+  return (
+    <>
+      {resource.loading && (
+        <p role="status">Refreshing… Showing previous data.</p>
+      )}
+      {resource.error && (
+        <div className="state error" role="alert">
+          <h2>Could not refresh data</h2>
+          <p>{resource.error.message} Showing previous data for this view.</p>
+          <button type="button" onClick={resource.refetch}>
+            Retry
+          </button>
+        </div>
+      )}
+      {children(resource.data)}
+    </>
+  );
 }
 
 function Reports() {
