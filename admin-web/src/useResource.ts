@@ -8,50 +8,75 @@ export interface Resource<T> {
   refetch: () => void;
 }
 
+/** Retain data only while refreshing the same resource key. */
 export function useResource<T>(
   load: () => Promise<T>,
   key: string,
 ): Resource<T> {
-  const [data, setData] = useState<T>();
-  const [error, setError] = useState<Error>();
-  const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
+  const [state, setState] = useState<{
+    key: string;
+    revision: number;
+    data?: T;
+    error?: Error;
+    loading: boolean;
+  }>({ key, revision: 0, loading: true });
   const loadRef = useRef(load);
-  const activeRequest = useRef("");
+  const activeRequest = useRef<symbol | undefined>(undefined);
   loadRef.current = load;
   const refetch = useCallback(() => setRevision((value) => value + 1), []);
 
   useEffect(() => {
-    const requestId = `${key}\0${revision}`;
+    // Identity, not key/revision text: A → B → A must not revive the first A request.
+    const requestId = Symbol();
     activeRequest.current = requestId;
-    const isCurrent = () => activeRequest.current === requestId;
+    setState((current) => ({
+      key,
+      revision,
+      data: current.key === key ? current.data : undefined,
+      loading: true,
+    }));
     const loadCurrent = async () => {
-      setLoading(true);
-      setError(undefined);
       try {
         const value = await loadRef.current();
-        if (isCurrent()) setData(value);
+        setState((current) =>
+          activeRequest.current === requestId
+            ? { key, revision, data: value, loading: false }
+            : current,
+        );
       } catch (reason) {
-        if (isCurrent()) {
-          setError(
-            reason instanceof Error ? reason : new Error("Request failed"),
-          );
-        }
-      } finally {
-        if (isCurrent()) setLoading(false);
+        setState((current) =>
+          activeRequest.current === requestId
+            ? {
+                ...current,
+                error:
+                  reason instanceof Error
+                    ? reason
+                    : new Error("Request failed"),
+                loading: false,
+              }
+            : current,
+        );
       }
     };
     void loadCurrent();
     return () => {
-      activeRequest.current = "";
+      if (activeRequest.current === requestId)
+        activeRequest.current = undefined;
     };
   }, [key, revision]);
 
+  // Mask mismatched state during render; waiting for the effect would expose old data.
+  const sameKey = state.key === key;
+  const data = sameKey ? state.data : undefined;
+  const error =
+    sameKey && state.revision === revision ? state.error : undefined;
+  const loading = !sameKey || state.revision !== revision || state.loading;
   return {
     data,
     error,
     loading,
-    stale: loading && data !== undefined,
+    stale: data !== undefined && (loading || error !== undefined),
     refetch,
   };
 }
