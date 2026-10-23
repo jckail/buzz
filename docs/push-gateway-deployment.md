@@ -91,7 +91,7 @@ capability—not a raw APNs token—into the encrypted relay lease.
 
 ## Helm production inputs
 
-The chart defaults to the `main` image tag because `.github/workflows/docker.yml` publishes it from the push-gateway lane. For a production rollout, open that workflow run's **Publish public push gateway image** job summary and copy its `sha256:...` digest. Verify the published subject and provenance before injecting it:
+The chart defaults to the `main` image tag because upstream's `docker.yml` publishes it from the push-gateway lane. For a production rollout, open that workflow run's **Publish public push gateway image** job summary and copy its `sha256:...` digest. Verify the published subject and provenance before injecting it:
 
 ```bash
 gh attestation verify \
@@ -120,9 +120,9 @@ git commit -m "release: push gateway chart X.Y.Z"
 git push -u origin push-chart-release/X.Y.Z
 ```
 
-When that PR merges, `.github/workflows/auto-tag-on-release-pr-merge.yml`
+When that PR merges, upstream's `auto-tag-on-release-pr-merge.yml`
 creates `push-chart-vX.Y.Z` and dispatches
-`.github/workflows/push-gateway-helm-chart.yml` with that immutable tag and bare
+`push-gateway-helm-chart.yml` with that immutable tag and bare
 version. The publisher verifies the checked-out commit is the tag target and the
 chart version equals `X.Y.Z` before pushing
 `oci://ghcr.io/block/buzz/charts/buzz-push-gateway`. A manually pushed

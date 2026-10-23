@@ -1,6 +1,7 @@
 # Glob patterns below mirror the `changes` job's dorny/paths-filter groups in
-# .github/workflows/ci.yml — keep the two in sync. Deliberate deviations:
-# - The `.github/workflows/ci.yml` path CI adds to its `rust`/`mobile` filters
+# upstream's ci.yml (deleted in this fork; Depot CI in .depot/workflows/ci.yml
+# runs its own jobs). Deliberate deviations:
+# - The workflow-file path upstream CI added to its `rust`/`mobile` filters
 #   is omitted; a CI-workflow-only edit doesn't need a local test run.
 # - `desktop-check`/`desktop-test` don't trigger on `rust` changes, though CI's
 #   Desktop Core job does. Those commands are pure TS (biome + node:test) with

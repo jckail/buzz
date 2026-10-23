@@ -8,7 +8,7 @@
 # / upload-pack — see crates/buzz-relay/src/api/git).
 #
 # Multi-arch is handled by running this same Dockerfile on native amd64 and
-# native arm64 runners (see .github/workflows/docker.yml). The Dockerfile
+# native arm64 runners (see upstream's docker.yml; not published from this fork). The Dockerfile
 # itself is platform-agnostic; do not add --platform pins.
 
 ARG RUST_VERSION=1.95
