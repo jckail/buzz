@@ -728,7 +728,7 @@ Upstream's workflows were deleted on purpose (owner decision, 2026-10-22: one fo
 | `mobile-release-candidate.yml` | mobile RC publishing | Not shipped from the fork |
 | `sprig.yml`, `benchmark-harbor.yml` | upstream-only automation and benchmarks | Not run in the fork |
 
-Consequences: `scripts/test-release-ref-contract.sh`, `scripts/test-mobile-release-contract.sh`, `scripts/test-signed-canary-contract.sh` and `deploy/charts/buzz-push-gateway/tests/release-contract.sh` read the deleted workflow files and fail if run locally. They are not part of this gate. No GitHub Actions remnants are kept. Secrets: none required.
+Consequences: the four release contract scripts (`scripts/test-release-ref-contract.sh`, `scripts/test-mobile-release-contract.sh`, `scripts/test-signed-canary-contract.sh` and `deploy/charts/buzz-push-gateway/tests/release-contract.sh`) only asserted wiring in the deleted release workflows, so they were removed (JCK-2102). `scripts/verify-release-ref.sh` is kept but no workflow here calls it. No GitHub Actions remnants are kept. Secrets: none required.
 
 ## Docs and systems
 
