@@ -1,0 +1,26 @@
+# Depot CI secret scan for the jckail/buzz fork (JCK-2032).
+# This fork authors only CI, docs and agent config. Upstream block/buzz source trees are full of
+# deliberate test keys and nsec/token literals (inline Rust test modules, fixtures, NIP specs), so
+# those trees are excluded to keep plain upstream merges green. New secrets in CI, config, scripts
+# and top-level files are still caught.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "upstream block/buzz source trees, fixtures and docs (test keys by design)"
+paths = [
+  '''^crates/''',
+  '''^desktop/''',
+  '''^mobile/''',
+  '''^web/''',
+  '''^admin-web/''',
+  '''^docs/''',
+  '''^deploy/charts/.*/examples/''',
+  '''(^|/)tests?/''',
+  '''\.md$''',
+  '''(^|/)Cargo\.lock$''',
+  '''^Justfile$''',
+  '''^sandpit/''',
+  '''(^|/)test[-_][^/]*$''',
+  '''^scripts/(test-|e2e-)''',
+]
