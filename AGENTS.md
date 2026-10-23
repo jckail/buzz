@@ -7,24 +7,41 @@ Buzz is a self-hostable workspace where humans and AI agents share rooms, built 
 
 These apply unless this repo's own rules, below or in linked docs, say otherwise. Repo-specific rules always win. If a rule here would break a repo gate (hooks, CI, branch protection, a documented release process), follow the gate and say so in your summary.
 
-### Git hygiene
-- **Isolate work in a git worktree** when the checkout is dirty, on another branch, or shared with other agents: `git worktree add ../.worktrees/<repo>-<topic> -b <branch> origin/<default-branch>`. Never switch branches or reset a checkout holding someone else's uncommitted work. Remove the worktree when merged.
-- **One focused branch per change**, cut from a fresh `origin/<default-branch>`. Never commit directly to the default branch unless this repo explicitly says to.
-- **Commit early and often, push as you go.** Small, reviewable, self-consistent commits; push after each meaningful step so work is never only on this machine. Do not let a branch drift for days.
+### Worktrees and branches
+- **Every change gets its own worktree inside this repo, under `.worktrees/`** (gitignored, so all of a repo's worktrees sit at one level and none are committed): `git fetch --prune origin && git worktree add .worktrees/<topic> -b <branch> origin/<default-branch>`. Do not create worktrees anywhere else (no `../`, `~/projects/.worktrees`, or extra clones). Never switch branches or reset a checkout holding someone else's uncommitted work.
+- **One focused branch per change, and every pushed branch names its Linear issue.** Cut it from a fresh `origin/<default-branch>` and use the issue's `gitBranchName` (e.g. `jckail13/jck-123-short-topic`) or `jck-123-short-topic`. A branch without a `jck-<n>` key is rejected by the pre-push hook and by the `branch-name` CI job; bot branches (`dependabot/*`, `renovate/*`, `release-please--*`) are the only exception. No issue yet? Find or create one first (see Linear below). Never commit directly to the default branch unless this repo explicitly says to.
+- **Commit early and often, push as you go**, so no work exists only on this machine. Open a draft PR once there is a pushed commit. Don't let a branch drift for days: rebase or merge from `origin/<default-branch>` and rerun the gate before review.
 - **Stage precisely** (`git add <paths>`, never `git add -A` or `.` blindly). Read `git status` and `git diff --staged` before every commit. Never commit secrets, `.env*`, credentials, large binaries or generated build output.
 - **Never** force-push shared branches, rewrite published history, skip hooks (`--no-verify`) or bypass branch protection. If a hook or check fails, fix the cause or stop and report it.
-- Keep the working tree clean at the end of a task: nothing important left uncommitted, stashed or only local.
+- **Cleanup is automatic after merge.** GitHub deletes the head branch when a PR merges (`delete_branch_on_merge`). Locally, `git-prune-merged` (from agent-skills, run on a schedule and safe to run by hand) removes clean worktrees and local branches whose work is on `origin/<default-branch>`, whether by ancestry or by a merged PR with the same head. It never touches dirty, locked, unpushed or open-PR work. When you finish, leave your worktree clean and pushed so the sweep can remove it, or remove it yourself: `git worktree remove .worktrees/<topic> && git branch -d <branch>`.
 
 ### Commit messages
-Match the style already in `git log` for this repo (use conventional commits `type(scope): subject` if it does). Otherwise: imperative subject, 72 characters or fewer, no trailing period; blank line; a body explaining **why** and any trade-offs, not a restatement of the diff. Reference the Linear issue (`JCK-123`) when one exists. Add the attribution trailer your harness requires, if any.
+Every pushed commit must be understandable on its own. Match the style already in `git log` (conventional commits `type(scope): subject` if the repo uses them). Otherwise use an imperative subject of 72 characters or fewer with no trailing period, then a blank line, then a body. The body says **why** the change is needed, what it changes at a high level, trade-offs, and how it was verified. It doesn't restate the diff. Reference the Linear issue (`JCK-123`). "wip", "fix", "updates" and empty bodies are not acceptable on pushed commits; reword before pushing, never after. Add the attribution trailer your harness requires, if any.
 
 ### Pull requests and merging
-Open a PR for every change: what changed, why, how it was verified, risks, and the Linear link. Keep PRs small. Merge only with required checks green and using the merge method this repo prefers (some require linear history or forbid squash: check the repo's settings and history first). Delete the branch after merge. Do not merge a PR you could not verify.
+Open a PR for every change and fill in `.github/pull_request_template.md`:
+- **Summary**: what changed, in a few sentences.
+- **Why**: the problem or request, with the Linear link.
+- **Changes**: the notable parts, file by file only when that helps.
+- **Verification**: the exact commands run and their result, plus the Depot CI run link.
+- **Risk and rollback**: what could break and how to undo it.
+
+Keep PRs small and the title in commit-subject style with the issue key. Merge only when the required checks are green (`depot-ci / ci-result`), using the merge method this repo prefers (some require linear history or forbid squash: check the repo's settings and history first). Do not merge a PR you could not verify.
+
+### CI: Depot CI only
+- **CI runs on Depot CI**, defined in `.depot/workflows/` (GitHub Actions syntax). Do not add routine CI to `.github/workflows/`. The only exceptions are jobs Depot can't run (macOS/iOS or Windows runners, `release:`/`issues:` events, `environment:`-gated cloud deploys), each kept dispatch- or tag-only with a comment saying why.
+- **Workflow conventions:** `name: depot-ci`. Jobs run on `depot-ubuntu-24.04[-arm][-<cpus>]` (2 CPUs by default; size up only for measured wins) with `timeout-minutes`. Use `permissions: contents: read` and `persist-credentials: false`. Pin third-party actions to commit SHAs. Concurrency cancels superseded PR runs. A final `ci-result` job (`if: always()`, `needs:` every job) fails unless all succeeded; branch protection requires only `depot-ci / ci-result`.
+- **Run it before you push:** `depot ci run --workflow .depot/workflows/ci.yml` (add `--job <id>` for one job) uploads your uncommitted diff as a patch. That run is feedback, not proof for the commit; the proof is the PR run. Debug with `depot ci status`, `depot ci logs`, `depot ci diagnose --run <id>`, and `depot ci ssh` into a live job.
+- **Secrets and variables** live in Depot: `depot ci secrets add NAME --repo jckail/<repo>`, or `depot ci vars add`. Never echo them, and never put them in workflow files.
+- **Use Depot for everything it does, locally and in CI.** That means `depot build` / `depot bake` for container images (never plain `docker build`; the project id is in `depot.json`), and the Depot Registry (`f3bqc4vdfr.registry.depot.dev`, or `depot build --save`) for images that don't need a cloud registry. Use Depot Cache for compilers: `depot cargo` for Rust, `GOCACHEPROG="depot gocache"` for Go. Use `depot ci run` instead of waiting on a push.
 
 ### Linear (workspace `jckail`, issue keys `JCK-nnn`)
-- Track non-trivial work in Linear. Find the existing issue before creating one; do not duplicate.
-- Put the issue key in the branch name (`jck-123-short-topic`), PR title or description, and relevant commits.
-- Post status at start, on meaningful progress, on blockers and at handoff. If you have no Linear access this session, put the same information in the PR and say so.
+- **All dev work starts from a Linear issue**, because the branch name needs its key. Find and read the canonical issue, comments and relations before creating one, and do not duplicate. Create a narrowly scoped issue only when none fits. Preserve owner, project and status. Move the issue to In Progress when the branch is pushed, attach the PR, and leave Done for verified, merged work.
+- Split large outcomes into independently testable child issues with current source, scope, finite acceptance criteria, genuine `blockedBy` prerequisites (do not turn related context into blockers) and handback.
+- Put the issue key in the branch name (`jck-123-short-topic` or the issue's `gitBranchName`), PR title or description, and relevant commits.
+- Reconcile GitHub issues by exact `owner/repo/number`, body and comments. Link each issue to its canonical Linear outcome (plus backlink where writable); closed GitHub state alone does not prove Linear acceptance.
+- Sign every authored Linear or GitHub comment `— <harness>-<agent_session>-<device_id>` using actual runtime identity (e.g., `codex_cli-123456-jordan-ubuntu` or `antigravity-<conversationId>-<device_id>`). Never borrow another agent's identity or alter human comments.
+- Post status at start, on meaningful progress, on blockers and at handoff (avoid unchanged repeat posts within 25 minutes). If you have no Linear access this session, put the same information in the PR and say so. Quarg owns execution, leases and approvals; Linear is planning only.
 
 ### Quality bar
 - Read before you write: follow the surrounding code's conventions, naming and comment density. Prefer editing existing code and docs over adding new ones.
@@ -677,9 +694,41 @@ No existing rule here relaxes a shared standard.
 - **Remotes:** `origin` is `jckail/buzz` (a fork), `upstream` is `block/buzz`. Default branch `main`; no branch protection on the fork (API 404). Squash, merge and rebase merges are all allowed on the fork. History and CONTRIBUTING.md use squash merges with conventional-commit subjects ending in `(#PR)`; prefer `gh pr merge --squash --delete-branch`.
 - **PR template:** Summary; Related issue (`Fixes #n` or N/A, plus the closest duplicate or "none found"); Testing. Code owners: `@block/buzz-oss-team`.
 - **Hooks (lefthook, installed by `just hooks`, pinned in `bin/`):** pre-commit auto-fixes and re-stages Rust fmt, Tauri fmt, desktop and web biome, mobile dart format; commit-msg adds the DCO trailer on `git commit`/`git merge`; pre-push runs `scripts/check-branch-skew.sh` (blocks when `origin/main` changed files your branch also touches) and path-filtered unit/check tests. Never `--no-verify`.
-- **CI** (`.github/workflows/ci.yml`, on PRs and pushes to `main`/`release`; path-filtered with `dorny/paths-filter`): Rust Lint, Unit Tests, Desktop Core, Desktop Smoke/Integration E2E, Backend Integration (relay e2e), Web, Mobile, Security (cargo-deny), Dead Token Reference Guard, Server Cross-Compile, Windows Rust, Desktop Build (macOS), plus the DCO Check named in the sections above (no DCO workflow file exists in this repo; it is enforced by an external GitHub app on upstream, and whether it runs on the fork is unverified). Other workflows: `docker.yml`, `helm-chart.yml`, `release.yml`, canaries, `mobile-release-candidate.yml`, `benchmark-harbor.yml`. Actions are pinned by commit SHA. Which checks are required on the fork is unknown (no protection); upstream's requirements are not discoverable from this repo.
+- **CI:** Depot CI only (`.depot/workflows/ci.yml`); see `## CI and local checks` below. Upstream's release, Docker, Helm, canary and mobile workflows were deleted from this fork.
 - **Releases:** three independent lanes ([RELEASING.md](RELEASING.md)). Desktop: `just release-desktop` makes a `version-bump/<v>` PR; merging triggers `auto-tag-on-release-pr-merge` which pushes `v<v>` and `release.yml`. Relay: `just release-relay` makes a `relay-release/<v>` PR, merge pushes `relay-v<v>` and `docker.yml`; every push to `main` also publishes `:main`/`:sha-<7>` images. Mobile: `scripts/mobile-release.sh candidate X.Y.Z` tags immutable `mobile-vX.Y.Z-rc.N` from remote `main`; the private pipeline handoff is manual. Tag creation uses a GitHub App token, not the workflow token. Do not run release recipes without being asked.
 - **Linear:** not mentioned in this repo's docs; follow the shared Linear standard if an issue exists.
+
+## CI and local checks
+
+CI is Depot CI only (JCK-2026, JCK-2032): `.depot/workflows/ci.yml`, workflow `depot-ci`. Require only `depot-ci / ci-result`. This fork changes only docs and agent config, so the gate is the Linux build, lint and test that matters when syncing from `block/buzz`.
+
+| Job | Local equivalent |
+| --- | --- |
+| `branch-name` | PR only: head branch must contain `jck-<n>` (dependabot/renovate/release-please exempt) |
+| `gitleaks` | `gitleaks git --redact .` (config: `.gitleaks.toml`; upstream source trees and fixtures are excluded because they hold deliberate test keys) |
+| `rust-lint` | `just fmt-check && just desktop-tauri-fmt-check && just clippy` |
+| `unit-tests` | `just test-unit` (nextest) |
+| `security` | `cargo-deny check bans licenses sources` gates; `cargo-deny check advisories` is informational (the RustSec DB moves daily and `Cargo.lock` is upstream's) |
+| `dead-token-guard` | the grep in the workflow (dead API token patterns in client code) |
+| `desktop-js` | `just desktop-install-ci && just desktop-check && just desktop-test && just desktop-build` |
+| `web` | `pnpm install --frozen-lockfile && just web-check && just web-build` |
+| `ci-result` | fails unless every job succeeded |
+
+`depot ci run --workflow .depot/workflows/ci.yml [--job <id>]` runs the gate on your working tree. Rust jobs use 4-CPU runners; the rest use 2.
+
+Upstream's workflows were deleted on purpose (owner decision, 2026-10-22: one focused gate). Do not re-add them when syncing upstream; if a sync brings them back, delete them again:
+
+| Deleted workflow | What it did | Why it is gone |
+| --- | --- | --- |
+| `ci.yml` (most jobs) | path-filtered upstream CI | Replaced by the gate above. Not ported: `desktop-smoke-e2e`, `desktop-e2e-relay`, `desktop-e2e-integration(-shard)`, `backend-integration`, `relay-e2e` (Playwright/Postgres/Redis stack), `mobile` (Flutter/Android), `server-cross-compile`, Tauri clippy/check/tests in `desktop-core`, and the release/mobile contract script steps. We do not change or ship those surfaces here |
+| `ci.yml` `windows-rust`, `desktop-build-macos` | Windows and macOS builds | Depot CI cannot run Windows or macOS |
+| `release.yml`, `auto-tag-on-release-pr-merge.yml`, `signed-macos-canary.yml`, `windows-canary.yml`, `linux-canary.yml` | desktop/relay release, signing and OIDC, tagging, canaries | We do not publish upstream's releases or hold their signing credentials |
+| `docker.yml` | image build and publish | We do not publish images from the fork |
+| `helm-chart.yml`, `push-gateway-helm-chart.yml` | chart lint and publish | Not deployed from the fork |
+| `mobile-release-candidate.yml` | mobile RC publishing | Not shipped from the fork |
+| `sprig.yml`, `benchmark-harbor.yml` | upstream-only automation and benchmarks | Not run in the fork |
+
+Consequences: `scripts/test-release-ref-contract.sh`, `scripts/test-mobile-release-contract.sh`, `scripts/test-signed-canary-contract.sh` and `deploy/charts/buzz-push-gateway/tests/release-contract.sh` read the deleted workflow files and fail if run locally. They are not part of this gate. No GitHub Actions remnants are kept. Secrets: none required.
 
 ## Docs and systems
 
@@ -693,4 +742,4 @@ No existing rule here relaxes a shared standard.
 - [deploy/compose/README.md](deploy/compose/README.md): single-node production Compose bundle.
 - [mobile/README.md](mobile/README.md), [desktop/README.md](desktop/README.md), [examples/README.md](examples/README.md): per-surface notes.
 - [SECURITY.md](SECURITY.md), [GOVERNANCE.md](GOVERNANCE.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): policy.
-- `.github/workflows/`: the CI and release truth. `lefthook.yml` and `Justfile`: the local gate truth.
+- `.depot/workflows/ci.yml`: the CI truth for this fork (upstream's release machinery is gone). `lefthook.yml` and `Justfile`: the local gate truth.

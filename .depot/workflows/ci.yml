@@ -1,0 +1,213 @@
+# Depot CI is this repo's CI of record (JCK-2026, JCK-2032). This fork (jckail/buzz of block/buzz)
+# runs one focused Linux gate in place of upstream's 12 workflows; see AGENTS.md, "CI and local checks",
+# for what was deleted and why. Require only `depot-ci / ci-result`.
+name: depot-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: depot-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Every pushed branch must carry its Linear key (bots exempt). PR-only; pushes to main skip it.
+  branch-name:
+    if: github.event_name == 'pull_request'
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Branch names its Linear issue (jck-<n>)
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "branch: $HEAD_REF"
+          case "$HEAD_REF" in dependabot/*|renovate/*|release-please--*) exit 0 ;; esac
+          echo "$HEAD_REF" | grep -Eiq '(^|[^a-z0-9])jck-[0-9]+' || { echo "::error::Branch '$HEAD_REF' has no Linear key; use the issue's gitBranchName (jck-<n>-topic)"; exit 1; }
+
+  # Pinned gitleaks binary (gitleaks-action demands an org license on Depot CI).
+  gitleaks:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks (new commits; full history when there is no base)
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb   # linux_x64; arm64 is e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          curl -fsSLo /tmp/gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          if [ -n "$BASE" ] && git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            /tmp/gitleaks git --redact --no-banner --log-opts="${BASE}..HEAD" .
+          else
+            /tmp/gitleaks git --redact --no-banner .
+          fi
+
+  # Rust compiles are the long pole, so these two use 4 CPUs.
+  rust-lint:
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Format check
+        run: just fmt-check
+      - name: Desktop Tauri format check
+        run: just desktop-tauri-fmt-check
+      - name: Clippy
+        run: just clippy
+
+  unit-tests:
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@0fd46367812ee04360509b4169d9f659d6892bb2 # v2.79.15
+        with:
+          tool: cargo-nextest@0.9.136
+      - name: Unit tests
+        run: just test-unit
+
+  security:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      # Licenses, banned crates and sources gate. RustSec advisories are reported but do not gate:
+      # the advisory DB moves daily and the dependency set (Cargo.lock) is upstream's, so a new
+      # advisory would turn main red with no change here. Fix them by syncing upstream.
+      - name: Dependency policy (licenses, bans, sources)
+        run: cargo-deny check bans licenses sources
+      - name: RustSec advisories (informational)
+        continue-on-error: true
+        run: cargo-deny check advisories
+
+  dead-token-guard:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Check for dead API token references in client code
+        run: |
+          # Fail if dead API token patterns reappear in desktop, mobile, docs, or config.
+          # Relay crates are excluded; they still use token auth internally.
+          PATTERNS='TokenScope|MintTokenResponse|hasApiToken|spr_tok_'
+          PATHS='desktop/src/ desktop/tests/ mobile/test/ mobile/lib/ .env.example'
+          EXCLUDES='--exclude-dir=node_modules --exclude-dir=.dart_tool'
+          if grep -rn $EXCLUDES -E "$PATTERNS" $PATHS 2>/dev/null; then
+            echo "::error::Dead API token references found in client code. See above."
+            exit 1
+          fi
+          echo "No dead token references found."
+
+  # Desktop frontend only (lint, vitest, vite build). The Tauri/Rust app, Playwright e2e and
+  # installers are not built in this fork.
+  desktop-js:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Restore pnpm store cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - name: Install desktop dependencies
+        run: just desktop-install-ci
+      - name: Desktop lint and format
+        run: just desktop-check
+      - name: Desktop unit tests
+        run: just desktop-test
+      - name: Desktop build
+        run: just desktop-build
+      - name: Save pnpm store cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+
+  web:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Restore pnpm store cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Web lint and format
+        run: just web-check
+      - name: Web build
+        run: just web-build
+      - name: Save pnpm store cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+
+  # Required verdict. Branch protection requires only `depot-ci / ci-result`.
+  ci-result:
+    name: ci-result
+    if: always()
+    needs: [branch-name, gitleaks, rust-lint, unit-tests, security, dead-token-guard, desktop-js, web]
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every job to succeed (skipped branch-name on push is fine)
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done
